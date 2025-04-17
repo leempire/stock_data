@@ -29,3 +29,10 @@ python tools/download_data.py --mode 3 --date 20250416
 # 导出数据
 python tools/download_data.py --mode 4 --output ./data/stock_data.parquet
 ```
+
+## 特征工程
+```bash
+python tools/feature_engineering.py --method 1
+# 指定路径
+python tools/feature_engineering.py --method 1 --input ./data/input.parquet --output ./data/output.parquet
+```
