@@ -85,13 +85,14 @@ class DataPreprocessor:
         
         # 量价关系特征
         df['amount_per_vol'] = df['amount'] / (df['vol'] + 1e-6)  # 单位成交量金额
-        df['vol_ma5'] = df['vol'].rolling(5).mean()  # 成交量5日均线
-        df['vol_ma10'] = df['vol'].rolling(10).mean()  # 成交量10日均线
+        df['vol_ma5'] = df['vol'].rolling(5, min_periods=1).mean()  # 成交量5日均线
+        df['vol_ma10'] = df['vol'].rolling(10, min_periods=1).mean()  # 成交量10日均线
         
         # 时间序列特征(按股票分组计算)
         df = df.sort_values(['code', 'day'])
-        df['close_ma5'] = df.groupby('code')['close'].rolling(5).mean().values  # 5日均线
-        df['close_ma10'] = df.groupby('code')['close'].rolling(10).mean().values  # 10日均线
+        df['close_ma5'] = df.groupby('code')['close'].rolling(5, min_periods=1).mean().values  # 5日均线
+        df['close_ma10'] = df.groupby('code')['close'].rolling(10, min_periods=1).mean().values  # 10日均线
         df['momentum'] = df['close'] / df.groupby('code')['close'].shift(5) - 1  # 5日动量
+        df['momentum'] = df['momentum'].fillna(0)  # 填充缺失值
         print('v1版本特征工程完成')
         return df
