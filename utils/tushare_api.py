@@ -34,7 +34,9 @@ class TushareAPI:
     def get_stock_codes(self, save=True):
         """该api每小时只能调用一次，建议保存到本地文件，避免重复调用"""
         stock_list = self.pro.stock_basic(exchange='', list_status='L')
-        stock_list.to_csv(os.path.join(self.data_path, 'stock_list.csv'), index=False)
+        if save:
+            os.makedirs(self.data_path, exist_ok=True)  # 新增目录检查
+            stock_list.to_csv(os.path.join(self.data_path, 'stock_list.csv'), index=False)
         return stock_list
         
     def get_stock_by_date(self, date):

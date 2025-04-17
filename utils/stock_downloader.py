@@ -22,7 +22,6 @@ class StockDownloader:
         """
         self.db = db
         self.tushare_api = tushare_api
-        # 移除progress_file相关代码
 
     def download_stocks(self, 
                        stock_codes: List[str], 
@@ -43,11 +42,11 @@ class StockDownloader:
         for code in stock_codes:
             # 检查是否跳过已存在数据
             if skip_existing and self._check_code_exists(code):
-                print(f"已跳过 {code} (已下载)")
+                print(f"\r已跳过 {code}...", end='   ')
                 continue
                 
             try:
-                print(f"正在下载 {code}...")
+                print(f"\r正在下载 {code}...", end=' ')
                 df = self.tushare_api.get_single_stock_daily(
                     code=code,
                     start_date=start_date,
@@ -56,10 +55,9 @@ class StockDownloader:
                 
                 # 保存到数据库
                 self._save_to_db(df, code)
-                print(f"完成下载 {code}")
                 
             except Exception as e:
-                print(f"下载 {code} 失败: {e}")
+                print(f"\r下载 {code} 失败: {e}")
                 continue
 
     def _check_code_exists(self, code: str) -> bool:
@@ -70,30 +68,30 @@ class StockDownloader:
 
     def _save_to_db(self, df: pd.DataFrame, code: str):
         """保存数据到MySQL数据库"""
-        # 准备批量插入数据
+        # 准备批量插入数据，将NaN替换为None
         data = [(
             row['ts_code'],
             row['trade_date'],
-            row['open'],
-            row['high'],
-            row['low'],
-            row['close'],
-            row['pre_close'],
-            row['change'],
-            row['pct_chg'],
-            row['vol'],
-            row['amount']
+            None if pd.isna(row['open']) else row['open'],
+            None if pd.isna(row['high']) else row['high'],
+            None if pd.isna(row['low']) else row['low'],
+            None if pd.isna(row['close']) else row['close'],
+            None if pd.isna(row['pre_close']) else row['pre_close'],
+            None if pd.isna(row['change']) else row['change'],
+            None if pd.isna(row['pct_chg']) else row['pct_chg'],
+            None if pd.isna(row['vol']) else row['vol'],
+            None if pd.isna(row['amount']) else row['amount']
         ) for _, row in df.iterrows()]
         
         sql = """
         INSERT INTO stock_daily 
         (ts_code, trade_date, open, high, low, close, pre_close, 
-         change, pct_chg, vol, amount)
+         `change`, pct_chg, vol, amount)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             open=VALUES(open), high=VALUES(high), low=VALUES(low),
             close=VALUES(close), pre_close=VALUES(pre_close),
-            change=VALUES(change), pct_chg=VALUES(pct_chg),
+            `change`=VALUES(`change`), pct_chg=VALUES(pct_chg),
             vol=VALUES(vol), amount=VALUES(amount)
         """
         self.db.executemany(sql, data)
@@ -156,3 +154,51 @@ class StockDownloader:
         """
         self.db.executemany(sql, data)
         print(f"成功更新{len(df)}条股票基本信息")
+
+    def export_daily_to_parquet(self, output_path: str, batch_size: int = 10_0000, code_prefixes: List[str] = None):
+        """从数据库高效导出stock_daily数据为parquet文件
+        
+        Args:
+            output_path: 输出文件路径
+            batch_size: 分批查询的每批数据量，默认10万条
+            code_prefixes: 要导出的股票代码前缀列表，如['600','601','000']
+        """
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+        print("正在从数据库分批导出股票日线数据...")
+        
+        # 1. 构建WHERE条件和参数
+        where_clause = ""
+        params = ()
+        if code_prefixes:
+            conditions = " OR ".join(["ts_code LIKE %s" for _ in code_prefixes])
+            where_clause = f"WHERE {conditions}"
+            params = tuple(f"{prefix}%" for prefix in code_prefixes)
+        
+        # 2. 先获取总行数
+        count_sql = f"SELECT COUNT(*) as total FROM stock_daily {where_clause}"
+        total = self.db.query(count_sql, params)[0]['total']
+        print(f"共找到{total}条符合条件的股票日线数据")
+        
+        if total == 0:
+            print("数据库中没有符合条件的股票日线数据")
+            return
+            
+        # 3. 分批查询
+        dfs = []
+        for offset in range(0, total, batch_size):
+            print(f"正在获取第 {offset+1}-{min(offset+batch_size, total)} 条数据...")
+            sql = f"""
+            SELECT * FROM stock_daily 
+            {where_clause}
+            LIMIT {batch_size} OFFSET {offset}
+            """
+            batch = pd.DataFrame(self.db.query(sql, params))
+            batch['trade_date'] = pd.to_datetime(batch['trade_date'], format='%Y%m%d')
+            dfs.append(batch)
+            
+        # 4. 合并并保存
+        df = pd.concat(dfs, ignore_index=True)
+        df.to_parquet(output_path, index=False)
+        print(f"成功导出{len(df)}条数据到 {output_path} (共{total}条)")
+        return df

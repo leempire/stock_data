@@ -1,4 +1,5 @@
 import pymysql
+from typing import List
 
 
 class MySQLManager:
@@ -21,7 +22,7 @@ class MySQLManager:
         self.conn = pymysql.connect(
             host=host,
             user=user,
-            password=password,
+            password=str(password),
             database=database,
             port=port,
             charset=charset,

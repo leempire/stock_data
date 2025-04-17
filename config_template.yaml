@@ -6,3 +6,12 @@ db_config:
   user: root
   password: xxxxxxxxxx
   database: stock
+data_config:
+  code_prefixes:
+    - '600'
+    - '601'
+    - '603'
+    - '000'
+    - '001'
+    - '002'
+  batch_size: 100_0000
