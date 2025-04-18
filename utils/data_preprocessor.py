@@ -1,6 +1,48 @@
 import pandas as pd
 import numpy as np
 from typing import Optional
+from joblib import delayed, Parallel
+import pandas as pd
+
+
+def by_time_add_rank_label(day, data, target_cols):
+    """截面label处理
+
+    Args:
+        day (_type_): _description_
+        data (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+
+    fea = []
+    for col in target_cols:
+        data.loc[:, f'{col}_std'] = data[col]
+        data.loc[:, f'{col}_rank_std'] = data[col].rank(method='min')
+        fea.append(f'{col}_std')
+        fea.append(f'{col}_rank_std')
+    mean = data[fea].mean()
+    std = data[fea].std()
+    # 这个归一化的思路是按照全市场去归一化的，后续可以尝试单个股票进行归一化；
+    data[fea] = data[fea].apply(lambda x: (x - mean[x.name]) / (std[x.name] + 1e-6))
+    
+    return data[['code', 'day'] + fea]
+
+
+def parallel_by_time_add_label(data, target_cols, num_workers=None):
+    """
+        parallel Cross Section Labeling
+    """
+
+    jobs = num_workers or -1
+    results = Parallel(n_jobs=jobs, verbose=1)(
+        delayed(by_time_add_rank_label)(time, new_group, target_cols)
+        for time, new_group in data.groupby('day')
+    )
+    df_combined = pd.concat(results, ignore_index=True)
+    return df_combined
+
 
 class DataPreprocessor:
     """股票数据预处理工具类"""
@@ -49,18 +91,8 @@ class DataPreprocessor:
         df['Ret_t11'] = df['open_11'] / df['open_1'] - 1
         
         # 6. 计算Ret_t11的std和rank_std
-        target_cols = ['Ret_t11']
-        fea = []
-        for col in target_cols:
-            df.loc[:, f'{col}_std'] = df[col]
-            df.loc[:, f'{col}_rank_std'] = df[col].rank(method='min')
-            fea.append(f'{col}_std')
-            fea.append(f'{col}_rank_std')
-        
-        # 归一化处理
-        mean = df[fea].mean()
-        std = df[fea].std()
-        df[fea] = df[fea].apply(lambda x: (x - mean[x.name]) / (std[x.name] + 1e-6))
+        reg_data = parallel_by_time_add_label(df, ['Ret_t11'])
+        df = pd.merge(df, reg_data, on=['code', 'day'], how='left')
         
         # 删除临时列
         df = df.drop(columns=['open_1', 'open_11'])
@@ -95,4 +127,68 @@ class DataPreprocessor:
         df['momentum'] = df['close'] / df.groupby('code')['close'].shift(5) - 1  # 5日动量
         df['momentum'] = df['momentum'].fillna(0)  # 填充缺失值
         print('v1版本特征工程完成')
+        return df
+    
+    @staticmethod
+    def preprocess_daily_data_v2(df: pd.DataFrame) -> pd.DataFrame:
+        """预处理日线数据(v2版本)，使用特定特征顺序，对齐QuantModel的ft1
+        
+        Args:
+            df: 经过preprocess_daily_data_basic处理后的DataFrame
+            
+        Returns:
+            预处理后的DataFrame，包含特定顺序的特征
+        """
+        print('正在进行v2版本特征工程...')
+        # 确保所有需要的列都存在
+        required_cols = ['vol', 'close', 'open', 'low', 'high', 'amount']
+        for col in required_cols:
+            if col not in df.columns:
+                raise ValueError(f"缺少必要列: {col}")
+        
+        # 计算adjvwap (成交量加权平均价格)
+        df['adjvwap'] = df['amount'] / (df['vol'] + 1e-6)
+        
+        # 按指定顺序选择特征
+        cols = ['code', 'day', 'open', 'high', 'low', 'close', 'vol', 'amount', 'adjvwap', 'SecurityID', 'time', 'Ret_t11', 'Ret_t11_std', 'Ret_t11_rank_std']
+        df = df[cols].copy()
+        
+        print('v2版本特征工程完成')
+        return df
+    
+    @staticmethod
+    def preprocess_daily_data_v3(df: pd.DataFrame, fit_start: int, fit_end: int) -> pd.DataFrame:
+        """预处理日线数据(v3版本)，按指定日期范围进行标准化
+        
+        Args:
+            df: 经过preprocess_daily_data_basic处理后的DataFrame
+            fit_start: 标准化开始日期(格式: YYYYMMDD)
+            fit_end: 标准化结束日期(格式: YYYYMMDD)
+            
+        Returns:
+            标准化后的DataFrame
+        """
+        print('正在进行v3版本特征工程...')
+        # 确保day列是整数类型
+        df['day'] = df['day'].astype(int)
+        
+        # 获取标准化区间数据
+        fit_mask = (df['day'] >= fit_start) & (df['day'] <= fit_end)
+        fit_df = df[fit_mask].copy()
+        
+        # 不需要标准化的列
+        exclude_cols = ['code', 'day', 'SecurityID', 'time', 'Ret_t11', 'Ret_t11_std', 'Ret_t11_rank_std']
+        numeric_cols = [col for col in df.columns if col not in exclude_cols and df[col].dtype in ['float64', 'int64']]
+        
+        # 计算Robust标准化参数(中位数和四分位距)
+        medians = fit_df[numeric_cols].median()
+        q1 = fit_df[numeric_cols].quantile(0.25)
+        q3 = fit_df[numeric_cols].quantile(0.75)
+        iqrs = q3 - q1
+        
+        # 对所有数据进行Robust标准化
+        for col in numeric_cols:
+            df[col] = (df[col] - medians[col]) / (iqrs[col] + 1e-6)
+        
+        print('v3版本特征工程完成')
         return df

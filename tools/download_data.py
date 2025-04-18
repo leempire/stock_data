@@ -14,6 +14,8 @@ def main():
     downloader = init.init_downloader()
     db = init.init_db()
     preprocessor = init.init_preprocessor()
+    data_path = config.get('data_path', './data')  # 从配置获取data_path
+    
 
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='股票数据下载工具')
@@ -22,7 +24,7 @@ def main():
                        help='1:更新stock_basic, 2:更新全量股票数据, 3:按日期更新, 4:导出数据')
     parser.add_argument('--date', type=str, 
                        help='指定日期(YYYYMMDD)，mode=3时使用')
-    parser.add_argument('--output', type=str, default='./data/stock_daily.parquet',
+    parser.add_argument('--output', type=str, default=os.path.join(data_path, 'stock_data.parquet'),
                        help='导出文件路径，mode=4时使用')
     args = parser.parse_args()
 
